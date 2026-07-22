@@ -1,0 +1,41 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      ".indexOn": ["username"],
+      ".read": true,
+      ".write": false
+    },
+    "students": {
+      ".indexOn": ["student_code"],
+      ".read": true,
+      ".write": true
+    },
+    "exams": {
+      ".indexOn": ["level"],
+      ".read": true,
+      ".write": true
+    },
+    "exam_sessions": {
+      ".read": true,
+      ".write": true
+    },
+    "events_log": {
+      ".read": true,
+      ".write": true
+    },
+    "exam_rounds": {
+      ".read": true,
+      ".write": true
+    },
+    "qr_codes": {
+      ".read": true,
+      ".write": true
+    },
+    "settings": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}

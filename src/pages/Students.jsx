@@ -1,0 +1,350 @@
+import { useEffect, useState } from 'react';
+import * as XLSX from 'xlsx';
+import { onValue, push, ref, remove, set, update } from 'firebase/database';
+import { db } from '../firebase';
+import Sidebar from '../components/Sidebar';
+import Topbar from '../components/Topbar';
+
+const LEVELS = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
+const TEMPLATE_HEADERS = ['รหัสนักเรียน', 'ชื่อ-นามสกุล', 'ชั้น', 'ห้อง'];
+const EMPTY_FORM = { student_code: '', name: '', level: 'ม.1', class_room: '' };
+
+export default function Students() {
+  const [students, setStudents] = useState([]);
+  const [preview, setPreview] = useState([]);
+  const [fileError, setFileError] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [search, setSearch] = useState('');
+  const [levelFilter, setLevelFilter] = useState('all');
+  const [roomFilter, setRoomFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 40;
+
+  useEffect(() => {
+    return onValue(ref(db, 'students'), (snap) => {
+      const list = [];
+      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+      list.sort((a, b) => (a.student_code || '').localeCompare(b.student_code || ''));
+      setStudents(list);
+    });
+  }, []);
+
+  function downloadTemplate() {
+    const ws = XLSX.utils.aoa_to_sheet([
+      TEMPLATE_HEADERS,
+      ['10001', 'สมชาย ใจดี', 'ม.1', 'ม.1/1'],
+      ['10002', 'สมหญิง รักเรียน', 'ม.1', 'ม.1/2']
+    ]);
+    ws['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 8 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'นักเรียน');
+    XLSX.writeFile(wb, 'แบบฟอร์มนำเข้านักเรียน.xlsx');
+  }
+
+  function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError('');
+    setImportResult(null);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const wb = XLSX.read(evt.target.result, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        const dataRows = rows.slice(1).filter((r) => r.some((cell) => String(cell).trim() !== ''));
+
+        const parsed = dataRows.map((r, i) => ({
+          row: i + 2,
+          student_code: String(r[0] ?? '').trim(),
+          name: String(r[1] ?? '').trim(),
+          level: String(r[2] ?? '').trim(),
+          class_room: String(r[3] ?? '').trim()
+        }));
+
+        const invalid = parsed.filter(
+          (p) => !p.student_code || !p.name || !LEVELS.includes(p.level) || !p.class_room
+        );
+        if (invalid.length > 0) {
+          setFileError(
+            `พบข้อมูลไม่ถูกต้อง ${invalid.length} แถว (แถวที่ ${invalid.map((v) => v.row).join(', ')}) — ตรวจสอบว่ากรอกครบทุกช่อง และ "ชั้น" ต้องเป็นค่าใดค่าหนึ่งจาก ม.1–ม.6`
+          );
+        }
+        setPreview(parsed);
+      } catch (err) {
+        setFileError('ไม่สามารถอ่านไฟล์นี้ได้ กรุณาตรวจสอบว่าเป็นไฟล์ .xlsx หรือ .csv ที่ถูกต้อง');
+        setPreview([]);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  }
+
+  async function confirmImport() {
+    const valid = preview.filter((p) => p.student_code && p.name && LEVELS.includes(p.level) && p.class_room);
+    if (valid.length === 0) return;
+    setImporting(true);
+    try {
+      const existingCodes = new Map(students.map((s) => [s.student_code, s.id]));
+      let added = 0;
+      let updated = 0;
+      for (const row of valid) {
+        const payload = {
+          student_code: row.student_code,
+          name: row.name,
+          level: row.level,
+          class_room: row.class_room
+        };
+        if (existingCodes.has(row.student_code)) {
+          await update(ref(db, `students/${existingCodes.get(row.student_code)}`), payload);
+          updated += 1;
+        } else {
+          await set(push(ref(db, 'students')), payload);
+          added += 1;
+        }
+      }
+      setImportResult({ added, updated });
+      setPreview([]);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleAddOne(e) {
+    e.preventDefault();
+    await set(push(ref(db, 'students')), form);
+    setForm(EMPTY_FORM);
+  }
+
+  async function del(id) {
+    if (confirm('ยืนยันการลบนักเรียนคนนี้?')) await remove(ref(db, `students/${id}`));
+  }
+
+  const rooms = [...new Set(students.map((s) => s.class_room).filter(Boolean))].sort();
+
+  const filtered = students.filter((s) => {
+    if (levelFilter !== 'all' && s.level !== levelFilter) return false;
+    if (roomFilter !== 'all' && s.class_room !== roomFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!`${s.student_code} ${s.name} ${s.level} ${s.class_room}`.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  function resetToFirstPage(setter) {
+    return (value) => {
+      setter(value);
+      setPage(1);
+    };
+  }
+
+  return (
+    <div className="flex min-h-screen bg-slate-50">
+      <Sidebar />
+      <div className="flex-1">
+        <Topbar icon="👥" title="จัดการนักเรียน" subtitle="นำเข้าด้วยไฟล์ Excel หรือเพิ่มทีละคน" />
+
+        <div className="p-6 space-y-6">
+          {/* นำเข้าด้วย Excel */}
+          <div className="bg-white rounded-xl shadow p-5">
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+              <div>
+                <h3 className="font-semibold text-slate-800">นำเข้ารายชื่อนักเรียนด้วยไฟล์ Excel</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  คอลัมน์ที่ต้องมี: รหัสนักเรียน, ชื่อ-นามสกุล, ชั้น (ม.1–ม.6), ห้อง — แถวแรกเป็นหัวตาราง
+                </p>
+              </div>
+              <button onClick={downloadTemplate} className="border border-primary text-primary px-4 py-2 rounded-lg text-sm hover:bg-blue-50 whitespace-nowrap">
+                ⬇ ดาวน์โหลดไฟล์ตัวอย่าง
+              </button>
+            </div>
+
+            <label className="flex flex-col items-center justify-center border-2 border-dashed rounded-xl py-8 cursor-pointer hover:bg-slate-50">
+              <span className="text-3xl mb-2">📤</span>
+              <span className="text-sm text-slate-600">คลิกเพื่อเลือกไฟล์ .xlsx หรือ .csv</span>
+              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+            </label>
+
+            {fileError && <div className="text-sm text-red-600 mt-3">{fileError}</div>}
+
+            {importResult && (
+              <div className="text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2 mt-3">
+                นำเข้าสำเร็จ — เพิ่มใหม่ {importResult.added} คน, อัปเดตข้อมูลเดิม {importResult.updated} คน
+              </div>
+            )}
+
+            {preview.length > 0 && (
+              <div className="mt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-semibold text-slate-700">ตัวอย่างข้อมูลก่อนนำเข้า ({preview.length} แถว)</h4>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setPreview([]); setFileError(''); }} className="text-xs px-3 py-1.5 rounded-lg border">
+                      ยกเลิก
+                    </button>
+                    <button
+                      onClick={confirmImport}
+                      disabled={importing}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-primary text-white hover:bg-primary-light disabled:opacity-60"
+                    >
+                      {importing ? 'กำลังนำเข้า...' : `ยืนยันนำเข้า ${preview.length} รายการ`}
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-x-auto max-h-64 border rounded-lg">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr className="text-left text-slate-400">
+                        <th className="py-2 px-2">แถว</th>
+                        <th className="py-2 px-2">รหัสนักเรียน</th>
+                        <th className="py-2 px-2">ชื่อ-นามสกุล</th>
+                        <th className="py-2 px-2">ชั้น</th>
+                        <th className="py-2 px-2">ห้อง</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((p) => {
+                        const bad = !p.student_code || !p.name || !LEVELS.includes(p.level) || !p.class_room;
+                        return (
+                          <tr key={p.row} className={`border-t ${bad ? 'bg-red-50' : ''}`}>
+                            <td className="py-1.5 px-2">{p.row}</td>
+                            <td className="py-1.5 px-2">{p.student_code || '—'}</td>
+                            <td className="py-1.5 px-2">{p.name || '—'}</td>
+                            <td className="py-1.5 px-2">{p.level || '—'}</td>
+                            <td className="py-1.5 px-2">{p.class_room || '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* เพิ่มทีละคน */}
+            <form onSubmit={handleAddOne} className="bg-white rounded-xl shadow p-5 space-y-3 h-fit">
+              <h3 className="font-semibold text-slate-800">เพิ่มนักเรียนทีละคน</h3>
+              <input required placeholder="รหัสนักเรียน" className="w-full border rounded-lg px-3 py-2 text-sm"
+                value={form.student_code} onChange={(e) => setForm({ ...form, student_code: e.target.value })} />
+              <input required placeholder="ชื่อ-นามสกุล" className="w-full border rounded-lg px-3 py-2 text-sm"
+                value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <select className="w-full border rounded-lg px-3 py-2 text-sm" value={form.level}
+                onChange={(e) => setForm({ ...form, level: e.target.value })}>
+                {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+              <input required placeholder="ห้อง เช่น ม.1/1" className="w-full border rounded-lg px-3 py-2 text-sm"
+                value={form.class_room} onChange={(e) => setForm({ ...form, class_room: e.target.value })} />
+              <button className="w-full bg-primary text-white py-2 rounded-lg text-sm hover:bg-primary-light">เพิ่มนักเรียน</button>
+            </form>
+
+            {/* รายชื่อทั้งหมด */}
+            <div className="lg:col-span-2 bg-white rounded-xl shadow p-5">
+              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                <h3 className="font-semibold text-slate-800">
+                  รายชื่อนักเรียนทั้งหมด ({filtered.length}{filtered.length !== students.length ? ` จาก ${students.length}` : ''})
+                </h3>
+              </div>
+
+              <div className="flex flex-wrap gap-2 mb-3">
+                <select
+                  className="border rounded-lg px-3 py-1.5 text-sm"
+                  value={levelFilter}
+                  onChange={(e) => resetToFirstPage(setLevelFilter)(e.target.value)}
+                >
+                  <option value="all">ทุกระดับชั้น</option>
+                  {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <select
+                  className="border rounded-lg px-3 py-1.5 text-sm"
+                  value={roomFilter}
+                  onChange={(e) => resetToFirstPage(setRoomFilter)(e.target.value)}
+                >
+                  <option value="all">ทุกห้อง</option>
+                  {rooms.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <input
+                  className="border rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[160px]"
+                  placeholder="🔍 ค้นหา รหัส/ชื่อ/ชั้น/ห้อง"
+                  value={search}
+                  onChange={(e) => resetToFirstPage(setSearch)(e.target.value)}
+                />
+                {(levelFilter !== 'all' || roomFilter !== 'all' || search) && (
+                  <button
+                    onClick={() => { resetToFirstPage(setLevelFilter)('all'); setRoomFilter('all'); setSearch(''); }}
+                    className="text-slate-400 hover:text-red-500 text-sm px-2"
+                    title="ล้างตัวกรอง"
+                  >
+                    ล้างตัวกรอง
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-white sticky top-0">
+                    <tr className="text-left text-slate-400 border-b">
+                      <th className="py-2 pr-2">รหัส</th>
+                      <th className="py-2 pr-2">ชื่อ-นามสกุล</th>
+                      <th className="py-2 pr-2">ชั้น</th>
+                      <th className="py-2 pr-2">ห้อง</th>
+                      <th className="py-2 pr-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.length === 0 && (
+                      <tr><td colSpan={5} className="py-8 text-center text-slate-400">ไม่พบข้อมูลนักเรียนตามเงื่อนไข</td></tr>
+                    )}
+                    {pageItems.map((s) => (
+                      <tr key={s.id} className="border-b last:border-0 hover:bg-slate-50">
+                        <td className="py-2 pr-2">{s.student_code}</td>
+                        <td className="py-2 pr-2">{s.name}</td>
+                        <td className="py-2 pr-2">{s.level}</td>
+                        <td className="py-2 pr-2">{s.class_room}</td>
+                        <td className="py-2 pr-2 text-right">
+                          <button onClick={() => del(s.id)} className="text-xs text-red-500 underline">ลบ</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {filtered.length > 0 && (
+                <div className="flex items-center justify-between mt-4 text-sm text-slate-500">
+                  <span>
+                    แสดง {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} จาก {filtered.length} คน
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={currentPage <= 1}
+                      onClick={() => setPage(currentPage - 1)}
+                      className="px-3 py-1.5 rounded-lg border disabled:opacity-40"
+                    >
+                      ← ก่อนหน้า
+                    </button>
+                    <span className="px-2">หน้า {currentPage} / {totalPages}</span>
+                    <button
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setPage(currentPage + 1)}
+                      className="px-3 py-1.5 rounded-lg border disabled:opacity-40"
+                    >
+                      ถัดไป →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

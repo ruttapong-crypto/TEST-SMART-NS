@@ -1,0 +1,153 @@
+# SmartExam — ระบบบริหารจัดการสอบออนไลน์อัจฉริยะ
+
+ระบบสร้างจากเอกสารวิเคราะห์ `SmartExam_System_Analysis.docx` เต็มรูปแบบ ใช้
+**React + Vite + Tailwind CSS** ฝั่ง frontend และ **Firebase Realtime Database**
+เป็นฐานข้อมูล/เรียลไทม์เอนจิ้น (แทน MySQL + WebSocket ตามที่เอกสารเสนอ เนื่องจาก
+Firebase RTDB รองรับการอัปเดตแบบเรียลไทม์ในตัวอยู่แล้ว เหมาะกับหน้า Monitor สด)
+
+## ฟีเจอร์ที่ทำครบตามสเปก
+
+| หน้า | Route | สถานะ |
+|---|---|---|
+| เข้าสู่ระบบผู้ดูแล/ครู (ระบบตัดสิน role จากฐานข้อมูลอัตโนมัติ) | `/login` | ✅ |
+| เข้าสอบนักเรียน (รหัสนักเรียน/QR) | `/student-login` | ✅ |
+| ทำข้อสอบ + log อุปกรณ์ + ตรวจจับพฤติกรรมผิดปกติ | `/student/exam` | ✅ |
+| แดชบอร์ดภาพรวม | `/dashboard` | ✅ |
+| **จัดการนักเรียน** (นำเข้า Excel แบบ bulk, ดาวน์โหลดไฟล์ตัวอย่าง, กรองชั้น/ห้อง/ค้นหา, แบ่งหน้า 40 คน/หน้า) | `/students` | ✅ |
+| **จัดการครู** (เพิ่มครูด้วยอีเมล/ชื่อ/วิชา/รหัสผ่าน — ครูล็อกอินแล้วเข้าหน้าจัดการข้อสอบเฉพาะวิชาตนเอง) | `/teachers` | ✅ |
+| **Monitor สด** (Live Control Room, สถิติ 4 การ์ด, ตัวกรอง, ตารางเรียลไทม์, เฝ้าระวัง, กราฟ) | `/monitor` | ✅ |
+| จัดการข้อสอบ/Google Form (ครูเห็นเฉพาะวิชาตนเอง) | `/exams` | ✅ |
+| รอบสอบ | `/exam-rounds` | ✅ |
+| เปิดสอบด่วน | `/quick-exam` | ✅ |
+| QR Code แยกระดับชั้น (ม.1–ม.6, คัดลอก/เปิด/พิมพ์/บันทึก, สร้าง QR เพิ่มเติมได้, เลือกวิชาที่เปิดสอบต่อระดับชั้นได้) | `/qr-codes` | ✅ |
+| รายงานย้อนหลัง + Export CSV | `/reports` | ✅ |
+| ตั้งค่าระบบ/Branding | `/settings` | ✅ |
+
+**สิทธิ์การเข้าถึงแต่ละหน้าแยกตาม role:**
+
+| Role | เข้าได้ |
+|---|---|
+| `admin` | ทุกหน้า |
+| `teacher` | `/exams` (เห็นเฉพาะข้อสอบวิชาของตนเอง) |
+| `monitor` / `staff` | `/monitor` เท่านั้น |
+
+## เริ่มต้นใช้งาน
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+```
+
+### ใส่ข้อมูลตัวอย่าง (แนะนำสำหรับทดสอบครั้งแรก)
+
+```bash
+node scripts/seed.mjs
+```
+
+สคริปต์นี้จะสร้างผู้ใช้ นักเรียน ข้อสอบ และเหตุการณ์ตัวอย่างใน Firebase ของคุณ
+บัญชีทดสอบหลัง seed:
+
+| Username | Password | บทบาท |
+|---|---|---|
+| `admin` | `admin1234` | Administrator |
+| `monitor` | `monitor1234` | Monitor (read-only) |
+| `staff_m1` | `staff1234` | ผู้ดูแลระดับชั้น ม.1 |
+| `teacher.math@school.ac.th` | `teacher1234` | Teacher (วิชาคณิตศาสตร์พื้นฐาน) |
+
+รหัสนักเรียนตัวอย่าง: `10001`, `10002`, `20001`
+
+### นำเข้ารายชื่อนักเรียนด้วยไฟล์ Excel
+
+ในหน้า **จัดการนักเรียน** (`/students`) กดปุ่ม "ดาวน์โหลดไฟล์ตัวอย่าง" เพื่อได้ template
+ที่มี 4 คอลัมน์: **รหัสนักเรียน, ชื่อ-นามสกุล, ชั้น (ม.1–ม.6), ห้อง** — กรอกข้อมูลแล้วอัปโหลด
+กลับเข้าระบบ ระบบจะแสดงตัวอย่างข้อมูลก่อนนำเข้าจริง และแจ้งเตือนแถวที่ข้อมูลไม่ครบ/ไม่ถูกต้อง
+(เช่น กรอกชั้นผิดรูปแบบ) ก่อนกดยืนยัน ถ้ารหัสนักเรียนซ้ำกับที่มีอยู่แล้วในระบบ จะ**อัปเดต**
+ข้อมูลแทนการสร้างซ้ำ
+
+### นักเรียนเข้าสอบ
+
+หน้า `/student-login` ให้นักเรียนกรอก**รหัสนักเรียน**อย่างเดียว (ไม่ต้องใช้รหัสผ่าน) ระบบจะค้นหา
+ในฐานข้อมูล `students` แล้วพาไปหน้าเลือกวิชาที่เปิดสอบตรงกับระดับชั้นของตนเองโดยอัตโนมัติ
+
+### ตั้งค่า Firebase Security Rules
+
+ไปที่ Firebase Console → Realtime Database → Rules แล้ววาง `database.rules.json`
+หรือใช้ Firebase CLI:
+
+```bash
+firebase deploy --only database
+```
+
+### Build สำหรับ production
+
+```bash
+npm run build     # ไฟล์ออกที่ dist/
+```
+
+Deploy ได้ทั้งกับ Firebase Hosting, Vercel, Netlify หรือเว็บโฮสต์ทั่วไป (เป็น static SPA)
+
+## โครงสร้างข้อมูลใน Firebase (Realtime Database)
+
+```
+users/{id}          username, password_hash, role(admin|teacher|monitor|staff),
+                     level_scope, name, subject(เฉพาะ teacher), email(เฉพาะ teacher)
+students/{id}        student_code, name, level(ม.1–ม.6), class_room
+exams/{id}            subject, level, room, start_time, end_time, google_form_link, status(open|closed)
+exam_sessions/{id}    student_id, exam_id, start_time, submit_time, device_info, status
+events_log/{id}       session_id, student_code, student_name, level, class_room, subject,
+                       event_type(leave_screen|disconnect|suspicious), warning_count, timestamp
+exam_rounds/{id}      name, date, start_time, end_time, note
+qr_codes/{id}         level, url, created_at
+settings              school_name, primary_color, accent_color, watch_threshold, risk_threshold
+```
+
+`events_log` ถูกออกแบบแบบ **denormalized** (มีชื่อนักเรียน/ห้อง/วิชาอยู่ในตัวเอง)
+เพื่อให้หน้า Monitor สดอ่านและกรองข้อมูลได้ทันทีโดยไม่ต้อง join หลายครั้ง ซึ่งเป็นแนวทาง
+มาตรฐานสำหรับ Firebase Realtime Database
+
+## การนับความเสี่ยง (ตามสเปก)
+
+- คำเตือนสะสม **4 ครั้งขึ้นไป** → ขึ้น "รายชื่อเฝ้าระวัง" (สีส้ม)
+- คำเตือนสะสม **6 ครั้งขึ้นไป** → ขึ้น "ความเสี่ยงสูง" (สีแดง)
+- ระบบตรวจจับอัตโนมัติ 2 เหตุการณ์ระหว่างทำข้อสอบ: สลับ/ออกจากหน้าจอ (`visibilitychange`)
+  และขาดการเชื่อมต่อ (`offline` event) — ทุกครั้งจะ push เข้า `events_log` และนับ
+  `warning_count` เพิ่มขึ้นอัตโนมัติ หน้า Monitor สดจะเห็นผลทันทีผ่าน `onValue` listener
+  (real-time, ไม่ต้องรอ polling — เร็วกว่าที่สเปกกำหนดไว้ที่ 10 วินาที)
+
+## ⚠️ หมายเหตุด้านความปลอดภัย (สำคัญก่อนใช้งานจริง)
+
+ระบบนี้เป็น **ต้นแบบ (prototype)** ที่ตรวจสอบรหัสผ่านฝั่ง client โดยเทียบค่ากับ
+`password_hash` ที่อ่านมาจาก Realtime Database ตรง ๆ ซึ่ง **ไม่ปลอดภัยสำหรับใช้งานจริง**
+เพราะใครก็ตามที่เปิด DevTools สามารถอ่านค่าที่เก็บใน node `users` ได้ (ตั้ง rule เป็น
+`read: true` เพื่อให้ล็อกอินทำงานได้)
+
+ก่อนนำไปใช้งานจริงกับข้อมูลนักเรียนจริง แนะนำให้ปรับปรุง:
+
+1. ย้าย logic ตรวจสอบรหัสผ่านไปที่ **Firebase Cloud Functions** หรือ backend แยก
+   แล้วคืนเฉพาะ custom token/session กลับมา (อย่าให้ client อ่าน password_hash ได้เลย)
+2. เปลี่ยนไปใช้ **Firebase Authentication** (Email/Password หรือ Custom Token)
+   แทนการเทียบรหัสผ่านเอง
+3. เข้ารหัสผ่านด้วย bcrypt/argon2 ฝั่งเซิร์ฟเวอร์ก่อนบันทึก ไม่ใช่ plaintext อย่างในสคริปต์ seed
+4. จำกัดสิทธิ์การเขียน `exam_sessions` / `events_log` ด้วย Firebase Auth UID แทน
+   การเปิด write ให้ทุกคน (rules ปัจจุบันเปิดกว้างเพื่อความสะดวกในการทดสอบ)
+
+## โครงสร้างโปรเจกต์
+
+```
+smartexam/
+├── src/
+│   ├── firebase.js              การเชื่อมต่อ Firebase
+│   ├── context/AuthContext.jsx  จัดการ session/สิทธิ์
+│   ├── components/              Sidebar, Topbar, StatCard, ProtectedRoute
+│   └── pages/                   หน้าทั้งหมด 11 หน้าตามสเปก
+├── scripts/seed.mjs             สคริปต์ใส่ข้อมูลตัวอย่าง
+├── database.rules.json          Firebase Security Rules
+└── package.json
+```
+
+## สิ่งที่ยังไม่รวมในเวอร์ชันนี้ (ต่อยอดได้)
+
+- หน้าสร้าง QR Code ใหม่แบบ dynamic (ปัจจุบันตายตัว 6 ระดับชั้นตามสเปก)
+- ระบบแจ้งเตือน (push notification) เมื่อมีนักเรียนความเสี่ยงสูง
+- การจัดการผู้ใช้ (เพิ่ม/ลบ Admin, Monitor, ผู้ดูแลระดับชั้น) ในหน้า Settings
+- Cloud Functions สำหรับ authentication ที่ปลอดภัย (ดูหัวข้อความปลอดภัยด้านบน)
