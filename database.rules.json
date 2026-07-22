@@ -18,6 +18,7 @@
       ".write": true
     },
     "exam_sessions": {
+      ".indexOn": ["student_id", "exam_id"],
       ".read": true,
       ".write": true
     },

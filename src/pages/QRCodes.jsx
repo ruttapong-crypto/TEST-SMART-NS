@@ -8,12 +8,12 @@ import Topbar from '../components/Topbar';
 const LEVELS = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
 
 const LEVEL_STYLES = {
-  'ม.1': 'from-blue-500 to-blue-600',
-  'ม.2': 'from-green-500 to-green-600',
-  'ม.3': 'from-orange-400 to-orange-500',
-  'ม.4': 'from-purple-500 to-purple-600',
-  'ม.5': 'from-pink-500 to-rose-600',
-  'ม.6': 'from-teal-600 to-cyan-700'
+  'ม.1': 'from-emerald-500 to-green-600',
+  'ม.2': 'from-lime-500 to-green-500',
+  'ม.3': 'from-yellow-400 to-amber-500',
+  'ม.4': 'from-teal-500 to-emerald-600',
+  'ม.5': 'from-green-500 to-lime-600',
+  'ม.6': 'from-amber-500 to-yellow-600'
 };
 
 function urlFor(level) {
@@ -49,10 +49,6 @@ export default function QRCodes() {
     await navigator.clipboard.writeText(url);
     setCopied(key);
     setTimeout(() => setCopied(null), 1500);
-  }
-
-  function openUrl(url) {
-    window.open(url, '_blank');
   }
 
   function printCard(key, url) {
@@ -143,7 +139,7 @@ export default function QRCodes() {
                       <button onClick={() => copyUrl(level, url)} className="border rounded-lg py-1.5 hover:bg-slate-50" title="คัดลอกลิงก์">
                         {copied === level ? '✓' : '📋'}
                       </button>
-                      <button onClick={() => openUrl(url)} className="border rounded-lg py-1.5 hover:bg-slate-50" title="เปิดลิงก์">🔗</button>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="border rounded-lg py-1.5 hover:bg-slate-50 text-center" title="เปิดลิงก์">🔗</a>
                       <button onClick={() => printCard(level, url)} className="border rounded-lg py-1.5 hover:bg-slate-50" title="พิมพ์">🖨️</button>
                       <button onClick={() => saveQr(level)} className="border rounded-lg py-1.5 hover:bg-slate-50" title="บันทึกลงระบบ">
                         {savedAt === level ? '✓' : '💾'}
@@ -175,7 +171,7 @@ export default function QRCodes() {
                         <button onClick={() => copyUrl(qr.id, qr.url)} className="border rounded-lg py-1.5 hover:bg-slate-50">
                           {copied === qr.id ? '✓' : '📋'}
                         </button>
-                        <button onClick={() => openUrl(qr.url)} className="border rounded-lg py-1.5 hover:bg-slate-50">🔗</button>
+                        <a href={qr.url} target="_blank" rel="noopener noreferrer" className="border rounded-lg py-1.5 hover:bg-slate-50 text-center">🔗</a>
                         <button onClick={() => printCard(qr.id, qr.url)} className="border rounded-lg py-1.5 hover:bg-slate-50">🖨️</button>
                       </div>
                     </div>

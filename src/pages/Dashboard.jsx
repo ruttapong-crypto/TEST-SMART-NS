@@ -22,10 +22,10 @@ export default function Dashboard() {
   }, []);
 
   const cards = [
-    { label: 'นักเรียนทั้งหมด', value: counts.students, to: '/reports', color: 'bg-blue-600' },
-    { label: 'ข้อสอบที่เปิดใช้งาน', value: counts.exams, to: '/exams', color: 'bg-indigo-600' },
-    { label: 'ผู้เข้าสอบสะสม', value: counts.sessions, to: '/reports', color: 'bg-orange-500' },
-    { label: 'เหตุการณ์ผิดปกติ', value: counts.events, to: '/monitor', color: 'bg-red-500' }
+    { label: 'นักเรียนทั้งหมด', value: counts.students, to: '/reports', color: 'bg-emerald-600' },
+    { label: 'ข้อสอบที่เปิดใช้งาน', value: counts.exams, to: '/exams', color: 'bg-green-600' },
+    { label: 'ผู้เข้าสอบสะสม', value: counts.sessions, to: '/reports', color: 'bg-amber-500' },
+    { label: 'เหตุการณ์ผิดปกติ', value: counts.events, to: '/monitor', color: 'bg-rose-500' }
   ];
 
   return (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { equalTo, get, orderByChild, push, query, ref, serverTimestamp, set, update } from 'firebase/database';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link, useNavigate } from 'react-router-dom';
 
 // ตรวจจับพฤติกรรมผิดปกติระหว่างสอบ: ออกจากหน้าจอ / ขาดการเชื่อมต่อ
 function useExamWatcher(active, onEvent) {
@@ -24,12 +24,14 @@ function useExamWatcher(active, onEvent) {
 }
 
 export default function StudentExam() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [exams, setExams] = useState([]);
+  const [submittedExamIds, setSubmittedExamIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [session, setSession] = useState(null);
   const [submitted, setSubmitted] = useState(false);
+  const [blockedMsg, setBlockedMsg] = useState('');
   const warningCountRef = useRef(0);
 
   const logEvent = async (eventType) => {
@@ -63,6 +65,17 @@ export default function StudentExam() {
         if (v.status === 'open') list.push({ id: child.key, ...v });
       });
       setExams(list);
+
+      // ตรวจสอบว่านักเรียนคนนี้เคยส่งข้อสอบวิชาไหนไปแล้วบ้าง เพื่อกันการเข้าสอบซ้ำ
+      const sessionsRef = ref(db, 'exam_sessions');
+      const sq = query(sessionsRef, orderByChild('student_id'), equalTo(user.id));
+      const sSnap = await get(sq);
+      const done = new Set();
+      sSnap.forEach((child) => {
+        const v = child.val();
+        if (v.status === 'submitted') done.add(v.exam_id);
+      });
+      setSubmittedExamIds(done);
       setLoading(false);
     })();
   }, [user]);
@@ -70,6 +83,11 @@ export default function StudentExam() {
   if (!user || user.role !== 'student') return <Navigate to="/student-login" replace />;
 
   async function startExam(exam) {
+    if (submittedExamIds.has(exam.id)) {
+      setBlockedMsg('คุณส่งข้อสอบวิชานี้ไปแล้ว ไม่สามารถเข้าสอบซ้ำได้');
+      return;
+    }
+    setBlockedMsg('');
     setSelected(exam);
     const sessionsRef = ref(db, 'exam_sessions');
     const newRef = push(sessionsRef);
@@ -85,22 +103,38 @@ export default function StudentExam() {
     setSession({ id: newRef.key, ...payload });
   }
 
+  const navigate = useNavigate();
+  function goToAdminLogin() {
+    logout();
+    navigate('/login');
+  }
+
   async function submitExam() {
     if (!session) return;
     await update(ref(db, `exam_sessions/${session.id}`), {
       submit_time: serverTimestamp(),
       status: 'submitted'
     });
+    setSubmittedExamIds((prev) => new Set(prev).add(selected.id));
     setSubmitted(true);
   }
 
   if (submitted) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-lime-50 to-yellow-50 px-4">
         <div className="bg-white rounded-2xl shadow p-8 text-center max-w-sm">
           <div className="text-4xl mb-2">✅</div>
           <h2 className="text-lg font-bold text-slate-800">ส่งข้อสอบเรียบร้อยแล้ว</h2>
           <p className="text-sm text-slate-500 mt-1">ขอบคุณ {user.name} สำหรับการเข้าสอบ</p>
+          <button
+            onClick={() => { setSubmitted(false); setSession(null); setSelected(null); }}
+            className="w-full mt-6 bg-primary hover:bg-primary-light text-white font-semibold py-2.5 rounded-lg"
+          >
+            กลับไปเลือกวิชาอื่น
+          </button>
+          <button onClick={goToAdminLogin} className="text-xs text-slate-400 hover:text-primary mt-4 underline">
+            เข้าสู่ระบบผู้ดูแล
+          </button>
         </div>
       </div>
     );
@@ -140,7 +174,7 @@ export default function StudentExam() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-lime-50 to-yellow-50 px-4 py-8">
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-2xl shadow p-6 mb-4">
           <h2 className="text-lg font-bold text-slate-800">สวัสดี {user.name}</h2>
@@ -152,19 +186,43 @@ export default function StudentExam() {
         {!loading && exams.length === 0 && (
           <p className="text-slate-400 text-sm">ยังไม่มีรายวิชาที่เปิดสอบสำหรับระดับชั้นของคุณ</p>
         )}
+        {blockedMsg && (
+          <div className="text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 mb-3">
+            {blockedMsg}
+          </div>
+        )}
         <div className="grid gap-3">
-          {exams.map((exam) => (
-            <button
-              key={exam.id}
-              onClick={() => startExam(exam)}
-              className="text-left bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-primary-light transition"
-            >
-              <div className="font-semibold text-slate-800">{exam.subject}</div>
-              <div className="text-xs text-slate-500 mt-1">
-                ห้อง {exam.room} · {exam.start_time} - {exam.end_time}
-              </div>
-            </button>
-          ))}
+          {exams.map((exam) => {
+            const isDone = submittedExamIds.has(exam.id);
+            return (
+              <button
+                key={exam.id}
+                onClick={() => startExam(exam)}
+                disabled={isDone}
+                className={`text-left rounded-xl shadow p-4 transition ${
+                  isDone
+                    ? 'bg-slate-100 cursor-not-allowed opacity-70'
+                    : 'bg-white hover:ring-2 hover:ring-primary-light'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="font-semibold text-slate-800">{exam.subject}</div>
+                  {isDone && (
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ ส่งแล้ว</span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  ห้อง {exam.room} · {exam.start_time} - {exam.end_time}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="text-center mt-8">
+          <button onClick={goToAdminLogin} className="text-xs text-slate-400 hover:text-primary underline">
+            เข้าสู่ระบบผู้ดูแล
+          </button>
         </div>
       </div>
     </div>

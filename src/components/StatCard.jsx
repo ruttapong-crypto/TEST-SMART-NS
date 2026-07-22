@@ -1,8 +1,8 @@
 const GRADIENTS = {
-  blue: 'from-blue-500 to-blue-600',
-  darkblue: 'from-blue-700 to-indigo-700',
-  orange: 'from-orange-400 to-orange-600',
-  red: 'from-red-500 to-rose-600'
+  blue: 'from-emerald-500 to-green-600',
+  darkblue: 'from-green-600 to-teal-700',
+  orange: 'from-amber-400 to-yellow-500',
+  red: 'from-rose-500 to-red-600'
 };
 
 export default function StatCard({ title, value, badge, note, linkLabel, color }) {

@@ -8,6 +8,20 @@ import Topbar from '../components/Topbar';
 const LEVELS = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
 const EMPTY = { subject: '', level: 'ม.1', room: '', start_time: '', end_time: '', google_form_link: '', status: 'closed' };
 
+// ยอมรับเฉพาะลิงก์ Google Form จริง เช่น https://docs.google.com/forms/... หรือ https://forms.gle/...
+function isValidGoogleFormLink(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url.trim());
+    const host = u.hostname.toLowerCase();
+    if (host === 'forms.gle') return true;
+    if (host === 'docs.google.com' && u.pathname.toLowerCase().includes('/forms/')) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export default function Exams() {
   const { user } = useAuth();
   const isTeacher = user?.role === 'teacher';
@@ -15,6 +29,7 @@ export default function Exams() {
   const [exams, setExams] = useState([]);
   const [form, setForm] = useState(() => (isTeacher ? { ...EMPTY, subject: user.subject || '' } : EMPTY));
   const [editingId, setEditingId] = useState(null);
+  const [formMsg, setFormMsg] = useState(null); // { type: 'success' | 'error', text }
 
   useEffect(() => {
     return onValue(ref(db, 'exams'), (snap) => {
@@ -29,14 +44,27 @@ export default function Exams() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const payload = isTeacher ? { ...form, subject: user.subject } : form;
-    if (editingId) {
-      await update(ref(db, `exams/${editingId}`), payload);
-    } else {
-      await set(push(ref(db, 'exams')), payload);
+    setFormMsg(null);
+
+    if (!isValidGoogleFormLink(form.google_form_link)) {
+      setFormMsg({ type: 'error', text: 'ลงข้อสอบไม่สำเร็จ — ลิงก์ Google Form ไม่ถูกต้อง กรุณาวางลิงก์รูปแบบ https://docs.google.com/forms/... หรือ https://forms.gle/...' });
+      return;
     }
-    setForm(isTeacher ? { ...EMPTY, subject: user.subject || '' } : EMPTY);
-    setEditingId(null);
+
+    const payload = isTeacher ? { ...form, subject: user.subject } : form;
+    try {
+      if (editingId) {
+        await update(ref(db, `exams/${editingId}`), payload);
+      } else {
+        await set(push(ref(db, 'exams')), payload);
+      }
+      setForm(isTeacher ? { ...EMPTY, subject: user.subject || '' } : EMPTY);
+      setEditingId(null);
+      setFormMsg({ type: 'success', text: 'ลงข้อสอบสำเร็จ' });
+      setTimeout(() => setFormMsg(null), 3000);
+    } catch (err) {
+      setFormMsg({ type: 'error', text: 'ลงข้อสอบไม่สำเร็จ — เกิดข้อผิดพลาดในการบันทึกข้อมูล' });
+    }
   }
 
   function edit(exam) {
@@ -47,6 +75,7 @@ export default function Exams() {
   function cancelEdit() {
     setEditingId(null);
     setForm(isTeacher ? { ...EMPTY, subject: user.subject || '' } : EMPTY);
+    setFormMsg(null);
   }
 
   async function toggleStatus(exam) {
@@ -93,6 +122,15 @@ export default function Exams() {
             </div>
             <input placeholder="ลิงก์ Google Form" className="w-full border rounded-lg px-3 py-2 text-sm"
               value={form.google_form_link} onChange={(e) => setForm({ ...form, google_form_link: e.target.value })} />
+
+            {formMsg && (
+              <div className={`text-sm rounded-lg px-3 py-2 ${
+                formMsg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'
+              }`}>
+                {formMsg.type === 'success' ? '✅ ' : '⚠️ '}{formMsg.text}
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button className="flex-1 bg-primary text-white py-2 rounded-lg text-sm hover:bg-primary-light">
                 {editingId ? 'บันทึกการแก้ไข' : 'เพิ่มข้อสอบ'}
@@ -111,10 +149,22 @@ export default function Exams() {
             <div className="space-y-2">
               {visibleExams.length === 0 && <p className="text-slate-400 text-sm">ยังไม่มีข้อสอบในระบบ</p>}
               {visibleExams.map((exam) => (
-                <div key={exam.id} className="flex items-center justify-between border rounded-lg px-4 py-3">
+                <div key={exam.id} className="flex items-center justify-between border rounded-lg px-4 py-3 flex-wrap gap-2">
                   <div>
                     <div className="font-medium text-slate-800">{exam.subject}</div>
                     <div className="text-xs text-slate-400">{exam.level} · ห้อง {exam.room} · {exam.start_time}-{exam.end_time}</div>
+                    {exam.google_form_link ? (
+                      <a
+                        href={exam.google_form_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-primary underline break-all"
+                      >
+                        🔗 เปิดลิงก์ข้อสอบ
+                      </a>
+                    ) : (
+                      <span className="text-xs text-slate-300">ยังไม่มีลิงก์ข้อสอบ</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => toggleStatus(exam)}
