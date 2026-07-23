@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { onValue, push, ref, remove, set, update } from 'firebase/database';
+import { get, onValue, push, ref, remove, set, update } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -22,6 +22,7 @@ export default function Students() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 40;
   const [addMsg, setAddMsg] = useState(null); // { type, text }
+  const [columnMap, setColumnMap] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -44,6 +45,25 @@ export default function Students() {
     );
     return unsub;
   }, []);
+
+  // ปุ่มรีเฟรชสำรอง — เผื่อ realtime listener ค้างเพราะแท็บถูกเบราว์เซอร์ freeze ไว้นาน
+  // แล้วการเชื่อมต่อ WebSocket ไม่ auto-reconnect (ดึงข้อมูลใหม่แบบ one-time แทน)
+  const [refreshing, setRefreshing] = useState(false);
+  async function manualRefresh() {
+    setRefreshing(true);
+    setLoadError('');
+    try {
+      const snap = await get(ref(db, 'students'));
+      const list = [];
+      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+      list.sort((a, b) => String(a.student_code || '').localeCompare(String(b.student_code || '')));
+      setStudents(list);
+    } catch (err) {
+      setLoadError(`รีเฟรชไม่สำเร็จ: ${err.message}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function downloadTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
@@ -68,6 +88,39 @@ export default function Students() {
         const wb = XLSX.read(evt.target.result, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+        // จับคู่คอลัมน์จาก "ชื่อหัวตาราง" แทนตำแหน่งตายตัว รองรับไฟล์ที่สลับลำดับคอลัมน์
+        // หรือมีคอลัมน์อื่นแทรกอยู่ (เช่น เลขที่, เลขประจำตัวประชาชน) — ถ้าหาหัวตารางที่ตรงไม่เจอ
+        // จะ fallback กลับไปใช้ตำแหน่งคอลัมน์ตามแบบฟอร์มมาตรฐาน (รหัส, ชื่อ, ชั้น, ห้อง)
+        const headerRow = rows[0] || [];
+        const norm = (s) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+        const findCol = (keywords) => {
+          for (let i = 0; i < headerRow.length; i++) {
+            const cell = norm(headerRow[i]);
+            if (cell && keywords.some((k) => cell.includes(k))) return i;
+          }
+          return -1;
+        };
+        const colCode = ((c) => (c === -1 ? 0 : c))(findCol(['รหัสนักเรียน', 'รหัสประจำตัว', 'รหัส', 'code', 'id']));
+        const colName = ((c) => (c === -1 ? 1 : c))(findCol(['ชื่อ-นามสกุล', 'ชื่อสกุล', 'ชื่อ', 'name']));
+        const colLevel = ((c) => (c === -1 ? 2 : c))(findCol(['ระดับชั้น', 'ชั้น', 'level']));
+        const colRoom = ((c) => (c === -1 ? 3 : c))(findCol(['ห้องเรียน', 'ห้อง', 'room']));
+
+        // แปลงค่า "ชั้น" ให้เป็นรูปแบบมาตรฐาน ม.1–ม.6 ไม่ว่าในไฟล์จะพิมพ์ว่า ม1, มัธยมศึกษาปีที่ 1, 1 ฯลฯ
+        function normalizeLevel(raw) {
+          const s = String(raw ?? '').trim();
+          if (LEVELS.includes(s)) return s;
+          const m = s.match(/[1-6]/);
+          if (m && /ม|มัธยม/.test(s)) return `ม.${m[0]}`;
+          return s;
+        }
+        // แปลงค่า "ห้อง" ให้เหลือแค่ตัวเลข รองรับกรณีไฟล์เก่ายังใส่แบบ ม.1/2 มา
+        function normalizeRoom(raw) {
+          const s = String(raw ?? '').trim();
+          if (s.includes('/')) return s.split('/').pop().trim();
+          return s;
+        }
+
         const dataRows = rows.slice(1).filter((r) => r.some((cell) => String(cell).trim() !== ''));
 
         // เซลล์ผสาน (merged cells) ในไฟล์ Excel ของโรงเรียนมักใช้กับคอลัมน์ "ชั้น" และ "ห้อง"
@@ -77,10 +130,10 @@ export default function Students() {
         let lastLevel = '';
         let lastRoom = '';
         const parsed = dataRows.map((r, i) => {
-          const studentCode = String(r[0] ?? '').trim();
-          const name = String(r[1] ?? '').trim();
-          let level = String(r[2] ?? '').trim();
-          let classRoom = String(r[3] ?? '').trim();
+          const studentCode = String(r[colCode] ?? '').trim();
+          const name = String(r[colName] ?? '').trim();
+          let level = normalizeLevel(r[colLevel]);
+          let classRoom = normalizeRoom(r[colRoom]);
 
           if (level) lastLevel = level;
           else if (studentCode || name) level = lastLevel; // เติมจากแถวบน เฉพาะแถวที่มีข้อมูลนักเรียนจริง
@@ -108,6 +161,12 @@ export default function Students() {
           const codes = [...new Set(duplicatesInFile.map((d) => d.student_code))];
           messages.push(`พบรหัสนักเรียนซ้ำกันเองในไฟล์: ${codes.join(', ')} — แถวที่ซ้ำจะถูกนำเข้าเป็นคนล่าสุดที่เจอเท่านั้น`);
         }
+        setColumnMap({
+          code: headerRow[colCode] || `คอลัมน์ ${colCode + 1}`,
+          name: headerRow[colName] || `คอลัมน์ ${colName + 1}`,
+          level: headerRow[colLevel] || `คอลัมน์ ${colLevel + 1}`,
+          room: headerRow[colRoom] || `คอลัมน์ ${colRoom + 1}`
+        });
         setFileError(messages.join(' | '));
         setPreview(parsed);
       } catch (err) {
@@ -281,10 +340,17 @@ export default function Students() {
 
             {preview.length > 0 && (
               <div className="mt-4">
+                {columnMap && (
+                  <div className="text-xs bg-slate-50 border rounded-lg px-3 py-2 mb-2 text-slate-500">
+                    ระบบจับคู่คอลัมน์เป็น: รหัสนักเรียน = <strong>"{columnMap.code}"</strong>, ชื่อ-นามสกุล = <strong>"{columnMap.name}"</strong>,
+                    ชั้น = <strong>"{columnMap.level}"</strong>, ห้อง = <strong>"{columnMap.room}"</strong> — ถ้าไม่ตรงกับไฟล์ของคุณ
+                    ให้ยกเลิกแล้วแก้หัวตารางในไฟล์ Excel ให้ชัดเจนขึ้น (เช่น "รหัสนักเรียน", "ชื่อ-นามสกุล", "ชั้น", "ห้อง")
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm font-semibold text-slate-700">ตัวอย่างข้อมูลก่อนนำเข้า ({preview.length} แถว)</h4>
                   <div className="flex gap-2">
-                    <button onClick={() => { setPreview([]); setFileError(''); }} className="text-xs px-3 py-1.5 rounded-lg border">
+                    <button onClick={() => { setPreview([]); setFileError(''); setColumnMap(null); }} className="text-xs px-3 py-1.5 rounded-lg border">
                       ยกเลิก
                     </button>
                     <button
@@ -357,13 +423,23 @@ export default function Students() {
                 <h3 className="font-semibold text-slate-800">
                   รายชื่อนักเรียนทั้งหมด ({filtered.length}{filtered.length !== students.length ? ` จาก ${students.length}` : ''})
                 </h3>
-                <button
-                  onClick={downloadAllStudents}
-                  disabled={students.length === 0}
-                  className="border border-primary text-primary px-3 py-1.5 rounded-lg text-xs hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                >
-                  ⬇ ดาวน์โหลดรายชื่อทั้งหมด (Excel)
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={manualRefresh}
+                    disabled={refreshing}
+                    className="border px-3 py-1.5 rounded-lg text-xs hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap"
+                    title="ดึงข้อมูลล่าสุดจาก Firebase อีกครั้ง (เผื่อหน้าจอค้าง)"
+                  >
+                    {refreshing ? '⏳ กำลังรีเฟรช...' : '🔄 รีเฟรชข้อมูล'}
+                  </button>
+                  <button
+                    onClick={downloadAllStudents}
+                    disabled={students.length === 0}
+                    className="border border-primary text-primary px-3 py-1.5 rounded-lg text-xs hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    ⬇ ดาวน์โหลดรายชื่อทั้งหมด (Excel)
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2 mb-3">
