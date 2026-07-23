@@ -22,14 +22,27 @@ export default function Students() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 40;
   const [addMsg, setAddMsg] = useState(null); // { type, text }
+  const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   useEffect(() => {
-    return onValue(ref(db, 'students'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      list.sort((a, b) => (a.student_code || '').localeCompare(b.student_code || ''));
-      setStudents(list);
-    });
+    const unsub = onValue(
+      ref(db, 'students'),
+      (snap) => {
+        const list = [];
+        snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+        list.sort((a, b) => String(a.student_code || '').localeCompare(String(b.student_code || '')));
+        setStudents(list);
+        setLoadError('');
+        setLoading(false);
+      },
+      (err) => {
+        setLoadError(`โหลดรายชื่อนักเรียนไม่สำเร็จ: ${err.message} (ตรวจสอบ Firebase Rules ว่า publish แล้วหรือยัง)`);
+        setLoading(false);
+      }
+    );
+    return unsub;
   }, []);
 
   function downloadTemplate() {
@@ -137,6 +150,44 @@ export default function Students() {
     if (confirm('ยืนยันการลบนักเรียนคนนี้?')) await remove(ref(db, `students/${id}`));
   }
 
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage(pageItems) {
+    setSelectedIds((prev) => {
+      const allSelected = pageItems.every((s) => prev.has(s.id));
+      const next = new Set(prev);
+      if (allSelected) {
+        pageItems.forEach((s) => next.delete(s.id));
+      } else {
+        pageItems.forEach((s) => next.add(s.id));
+      }
+      return next;
+    });
+  }
+
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`ยืนยันการลบนักเรียนที่เลือกไว้ ${selectedIds.size} คน? การลบนี้ไม่สามารถย้อนกลับได้`)) return;
+    await Promise.all([...selectedIds].map((id) => remove(ref(db, `students/${id}`))));
+    setSelectedIds(new Set());
+  }
+
+  function downloadAllStudents() {
+    const rows = students.map((s) => [s.student_code, s.name, s.level, s.class_room]);
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...rows]);
+    ws['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 8 }, { wch: 8 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'นักเรียน');
+    XLSX.writeFile(wb, `รายชื่อนักเรียนทั้งหมด_${students.length}คน.xlsx`);
+  }
+
   const rooms = [...new Set(students.map((s) => s.class_room).filter(Boolean))].sort();
 
   const filtered = students.filter((s) => {
@@ -165,6 +216,12 @@ export default function Students() {
       <Sidebar />
       <div className="flex-1">
         <Topbar icon="👥" title="จัดการนักเรียน" subtitle="นำเข้าด้วยไฟล์ Excel หรือเพิ่มทีละคน" />
+
+        {loadError && (
+          <div className="mx-6 mt-4 text-sm bg-red-50 text-red-600 border border-red-200 rounded-lg px-4 py-3">
+            ⚠️ {loadError}
+          </div>
+        )}
 
         <div className="p-6 space-y-6">
           {/* นำเข้าด้วย Excel */}
@@ -273,6 +330,13 @@ export default function Students() {
                 <h3 className="font-semibold text-slate-800">
                   รายชื่อนักเรียนทั้งหมด ({filtered.length}{filtered.length !== students.length ? ` จาก ${students.length}` : ''})
                 </h3>
+                <button
+                  onClick={downloadAllStudents}
+                  disabled={students.length === 0}
+                  className="border border-primary text-primary px-3 py-1.5 rounded-lg text-xs hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  ⬇ ดาวน์โหลดรายชื่อทั้งหมด (Excel)
+                </button>
               </div>
 
               <div className="flex flex-wrap gap-2 mb-3">
@@ -309,10 +373,29 @@ export default function Students() {
                 )}
               </div>
 
+              {selectedIds.size > 0 && (
+                <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3 text-sm">
+                  <span className="text-red-700">เลือกไว้ {selectedIds.size} คน</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setSelectedIds(new Set())} className="text-slate-500 hover:underline">ยกเลิกการเลือก</button>
+                    <button onClick={bulkDelete} className="bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-700">
+                      🗑 ลบที่เลือกทั้งหมด
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-white sticky top-0">
                     <tr className="text-left text-slate-400 border-b">
+                      <th className="py-2 pr-2 w-8">
+                        <input
+                          type="checkbox"
+                          checked={pageItems.length > 0 && pageItems.every((s) => selectedIds.has(s.id))}
+                          onChange={() => toggleSelectAllOnPage(pageItems)}
+                        />
+                      </th>
                       <th className="py-2 pr-2">รหัส</th>
                       <th className="py-2 pr-2">ชื่อ-นามสกุล</th>
                       <th className="py-2 pr-2">ชั้น</th>
@@ -321,11 +404,17 @@ export default function Students() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pageItems.length === 0 && (
-                      <tr><td colSpan={5} className="py-8 text-center text-slate-400">ไม่พบข้อมูลนักเรียนตามเงื่อนไข</td></tr>
+                    {loading && (
+                      <tr><td colSpan={6} className="py-8 text-center text-slate-400">กำลังโหลดข้อมูล...</td></tr>
+                    )}
+                    {!loading && pageItems.length === 0 && (
+                      <tr><td colSpan={6} className="py-8 text-center text-slate-400">ไม่พบข้อมูลนักเรียนตามเงื่อนไข</td></tr>
                     )}
                     {pageItems.map((s) => (
-                      <tr key={s.id} className="border-b last:border-0 hover:bg-slate-50">
+                      <tr key={s.id} className={`border-b last:border-0 hover:bg-slate-50 ${selectedIds.has(s.id) ? 'bg-lime-50' : ''}`}>
+                        <td className="py-2 pr-2">
+                          <input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} />
+                        </td>
                         <td className="py-2 pr-2">{s.student_code}</td>
                         <td className="py-2 pr-2">{s.name}</td>
                         <td className="py-2 pr-2">{s.level}</td>
