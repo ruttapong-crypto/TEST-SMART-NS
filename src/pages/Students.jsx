@@ -70,22 +70,45 @@ export default function Students() {
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
         const dataRows = rows.slice(1).filter((r) => r.some((cell) => String(cell).trim() !== ''));
 
-        const parsed = dataRows.map((r, i) => ({
-          row: i + 2,
-          student_code: String(r[0] ?? '').trim(),
-          name: String(r[1] ?? '').trim(),
-          level: String(r[2] ?? '').trim(),
-          class_room: String(r[3] ?? '').trim()
-        }));
+        // เซลล์ผสาน (merged cells) ในไฟล์ Excel ของโรงเรียนมักใช้กับคอลัมน์ "ชั้น" และ "ห้อง"
+        // เมื่ออ่านด้วยไลบรารีจะได้ค่าเฉพาะแถวบนสุดของกลุ่มที่ผสาน แถวที่เหลือจะว่างเปล่า
+        // จึงต้อง "เติมค่าจากแถวก่อนหน้า" (forward-fill) ให้ทั้งสองคอลัมน์นี้ ไม่เช่นนั้นแถวส่วนใหญ่
+        // จะถูกมองว่าข้อมูลไม่ครบและถูกข้ามไปอย่างเงียบๆ (เหลือแค่นักเรียนคนแรกของแต่ละกลุ่ม)
+        let lastLevel = '';
+        let lastRoom = '';
+        const parsed = dataRows.map((r, i) => {
+          const studentCode = String(r[0] ?? '').trim();
+          const name = String(r[1] ?? '').trim();
+          let level = String(r[2] ?? '').trim();
+          let classRoom = String(r[3] ?? '').trim();
 
+          if (level) lastLevel = level;
+          else if (studentCode || name) level = lastLevel; // เติมจากแถวบน เฉพาะแถวที่มีข้อมูลนักเรียนจริง
+
+          if (classRoom) lastRoom = classRoom;
+          else if (studentCode || name) classRoom = lastRoom;
+
+          return { row: i + 2, student_code: studentCode, name, level, class_room: classRoom };
+        });
+
+        const duplicatesInFile = parsed.filter(
+          (p, idx) => p.student_code && parsed.findIndex((q) => q.student_code === p.student_code) !== idx
+        );
         const invalid = parsed.filter(
           (p) => !p.student_code || !p.name || !LEVELS.includes(p.level) || !p.class_room
         );
+
+        const messages = [];
         if (invalid.length > 0) {
-          setFileError(
-            `พบข้อมูลไม่ถูกต้อง ${invalid.length} แถว (แถวที่ ${invalid.map((v) => v.row).join(', ')}) — ตรวจสอบว่ากรอกครบทุกช่อง และ "ชั้น" ต้องเป็นค่าใดค่าหนึ่งจาก ม.1–ม.6`
+          messages.push(
+            `พบข้อมูลไม่ครบ ${invalid.length} แถว (แถวที่ ${invalid.map((v) => v.row).join(', ')}) — แถวเหล่านี้จะถูกข้ามตอนนำเข้า`
           );
         }
+        if (duplicatesInFile.length > 0) {
+          const codes = [...new Set(duplicatesInFile.map((d) => d.student_code))];
+          messages.push(`พบรหัสนักเรียนซ้ำกันเองในไฟล์: ${codes.join(', ')} — แถวที่ซ้ำจะถูกนำเข้าเป็นคนล่าสุดที่เจอเท่านั้น`);
+        }
+        setFileError(messages.join(' | '));
         setPreview(parsed);
       } catch (err) {
         setFileError('ไม่สามารถอ่านไฟล์นี้ได้ กรุณาตรวจสอบว่าเป็นไฟล์ .xlsx หรือ .csv ที่ถูกต้อง');
@@ -98,6 +121,7 @@ export default function Students() {
 
   async function confirmImport() {
     const valid = preview.filter((p) => p.student_code && p.name && LEVELS.includes(p.level) && p.class_room);
+    const skipped = preview.length - valid.length;
     if (valid.length === 0) return;
     setImporting(true);
     try {
@@ -115,11 +139,13 @@ export default function Students() {
           await update(ref(db, `students/${existingCodes.get(row.student_code)}`), payload);
           updated += 1;
         } else {
-          await set(push(ref(db, 'students')), payload);
+          const newRef = push(ref(db, 'students'));
+          await set(newRef, payload);
+          existingCodes.set(row.student_code, newRef.key); // กันซ้ำถ้ามีรหัสเดียวกันอีกในไฟล์เดียวกัน
           added += 1;
         }
       }
-      setImportResult({ added, updated });
+      setImportResult({ added, updated, skipped });
       setPreview([]);
     } finally {
       setImporting(false);
@@ -249,6 +275,7 @@ export default function Students() {
             {importResult && (
               <div className="text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2 mt-3">
                 นำเข้าสำเร็จ — เพิ่มใหม่ {importResult.added} คน, อัปเดตข้อมูลเดิม {importResult.updated} คน
+                {importResult.skipped > 0 && `, ข้ามไป ${importResult.skipped} แถว (ข้อมูลไม่ครบ)`}
               </div>
             )}
 
