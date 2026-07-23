@@ -123,6 +123,8 @@ export default function Login() {
 
         <div className="text-xs text-slate-400 text-center mt-8 border-t pt-4">
           ระบบรักษาความปลอดภัยด้วย Password Hash และ Session
+          <br />
+          ผู้พัฒนาระบบ นายรัฐพงศ์ วะสุรีย์
         </div>
       </div>
     </div>

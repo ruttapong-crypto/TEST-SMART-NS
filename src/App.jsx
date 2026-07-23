@@ -4,7 +4,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 import Login from './pages/Login';
 import StudentLogin from './pages/StudentLogin';
-import StudentExam from './pages/StudentExam';
 import Dashboard from './pages/Dashboard';
 import Monitor from './pages/Monitor';
 import Exams from './pages/Exams';
@@ -23,14 +22,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/student-login" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/student-login" element={<StudentLogin />} />
-        <Route
-          path="/student/exam"
-          element={
-            <ProtectedRoute allow={['student']}>
-              <StudentExam />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/student/exam" element={<Navigate to="/student-login" replace />} />
         <Route
           path="/dashboard"
           element={

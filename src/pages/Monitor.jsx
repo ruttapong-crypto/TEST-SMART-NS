@@ -11,7 +11,8 @@ const LEVELS = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
 const EVENT_LABEL = {
   disconnect: 'ขาดการเชื่อมต่อ',
   leave_screen: 'ออกจากหน้าจอ',
-  suspicious: 'พฤติกรรมผิดปกติ'
+  suspicious: 'พฤติกรรมผิดปกติ',
+  submitted: 'ส่งข้อสอบแล้ว'
 };
 
 export default function Monitor() {

@@ -21,6 +21,7 @@ export default function Students() {
   const [roomFilter, setRoomFilter] = useState('all');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 40;
+  const [addMsg, setAddMsg] = useState(null); // { type, text }
 
   useEffect(() => {
     return onValue(ref(db, 'students'), (snap) => {
@@ -34,10 +35,10 @@ export default function Students() {
   function downloadTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
       TEMPLATE_HEADERS,
-      ['10001', 'สมชาย ใจดี', 'ม.1', 'ม.1/1'],
-      ['10002', 'สมหญิง รักเรียน', 'ม.1', 'ม.1/2']
+      ['10001', 'สมชาย ใจดี', 'ม.1', '1'],
+      ['10002', 'สมหญิง รักเรียน', 'ม.1', '2']
     ]);
-    ws['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 8 }, { wch: 10 }];
+    ws['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 8 }, { wch: 8 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'นักเรียน');
     XLSX.writeFile(wb, 'แบบฟอร์มนำเข้านักเรียน.xlsx');
@@ -114,8 +115,22 @@ export default function Students() {
 
   async function handleAddOne(e) {
     e.preventDefault();
-    await set(push(ref(db, 'students')), form);
+    setAddMsg(null);
+    const code = form.student_code.trim();
+    const duplicate = students.some((s) => s.student_code === code);
+    if (duplicate) {
+      setAddMsg({ type: 'error', text: `รหัสนักเรียน "${code}" มีอยู่ในระบบแล้ว กรุณาใช้รหัสอื่น` });
+      return;
+    }
+    await set(push(ref(db, 'students')), { ...form, student_code: code });
+    setAddMsg({ type: 'success', text: `เพิ่ม "${form.name}" เรียบร้อยแล้ว` });
     setForm(EMPTY_FORM);
+    // ล้างตัวกรองและกลับไปหน้าแรก เพื่อให้เห็นนักเรียนที่เพิ่งเพิ่มทันที (เผื่อโดนตัวกรองเดิมบัง)
+    setLevelFilter('all');
+    setRoomFilter('all');
+    setSearch('');
+    setPage(1);
+    setTimeout(() => setAddMsg(null), 4000);
   }
 
   async function del(id) {
@@ -158,7 +173,7 @@ export default function Students() {
               <div>
                 <h3 className="font-semibold text-slate-800">นำเข้ารายชื่อนักเรียนด้วยไฟล์ Excel</h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  คอลัมน์ที่ต้องมี: รหัสนักเรียน, ชื่อ-นามสกุล, ชั้น (ม.1–ม.6), ห้อง — แถวแรกเป็นหัวตาราง
+                  คอลัมน์ที่ต้องมี: รหัสนักเรียน, ชื่อ-นามสกุล, ชั้น (ม.1–ม.6), ห้อง (ตัวเลข เช่น 1, 2, 3) — แถวแรกเป็นหัวตาราง
                 </p>
               </div>
               <button onClick={downloadTemplate} className="border border-primary text-primary px-4 py-2 rounded-lg text-sm hover:bg-blue-50 whitespace-nowrap">
@@ -240,8 +255,15 @@ export default function Students() {
                 onChange={(e) => setForm({ ...form, level: e.target.value })}>
                 {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
-              <input required placeholder="ห้อง เช่น ม.1/1" className="w-full border rounded-lg px-3 py-2 text-sm"
+              <input required placeholder="ห้อง เช่น 1, 2, 3" type="number" min="1" className="w-full border rounded-lg px-3 py-2 text-sm"
                 value={form.class_room} onChange={(e) => setForm({ ...form, class_room: e.target.value })} />
+              {addMsg && (
+                <div className={`text-sm rounded-lg px-3 py-2 ${
+                  addMsg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'
+                }`}>
+                  {addMsg.type === 'success' ? '✅ ' : '⚠️ '}{addMsg.text}
+                </div>
+              )}
               <button className="w-full bg-primary text-white py-2 rounded-lg text-sm hover:bg-primary-light">เพิ่มนักเรียน</button>
             </form>
 

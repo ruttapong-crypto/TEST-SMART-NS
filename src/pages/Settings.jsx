@@ -1,67 +1,94 @@
-import { useEffect, useState } from 'react';
-import { get, ref, set } from 'firebase/database';
+import { useState } from 'react';
+import { ref, update } from 'firebase/database';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
 
-const DEFAULTS = { school_name: '', primary_color: '#1F4E79', accent_color: '#2E75B6', watch_threshold: 4, risk_threshold: 6 };
-
 export default function Settings() {
-  const [form, setForm] = useState(DEFAULTS);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      const snap = await get(ref(db, 'settings'));
-      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.val() });
-    })();
-  }, []);
+  const { user } = useAuth();
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [msg, setMsg] = useState(null); // { type, text }
+  const [busy, setBusy] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    await set(ref(db, 'settings'), form);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    setMsg(null);
+
+    if (newPassword.length < 6) {
+      setMsg({ type: 'error', text: 'รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setMsg({ type: 'error', text: 'รหัสผ่านใหม่และการยืนยันไม่ตรงกัน' });
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await update(ref(db, `users/${user.id}`), { password_hash: newPassword });
+      setMsg({ type: 'success', text: 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว ใช้รหัสใหม่ในการล็อกอินครั้งถัดไป' });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setMsg({ type: 'error', text: 'เกิดข้อผิดพลาด ไม่สามารถเปลี่ยนรหัสผ่านได้' });
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
       <div className="flex-1">
-        <Topbar icon="⚙️" title="ตั้งค่าระบบ" subtitle="ปรับแต่ง Branding และค่าพื้นฐาน" />
-        <div className="p-6 max-w-xl">
+        <Topbar icon="⚙️" title="ตั้งค่าระบบ" subtitle="เปลี่ยนรหัสผ่านผู้ดูแลระบบ" />
+        <div className="p-6 max-w-md">
           <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow p-5 space-y-4">
+            <h3 className="font-semibold text-slate-800">เปลี่ยนรหัสผ่าน</h3>
+            <p className="text-xs text-slate-400">
+              บัญชี: <span className="font-medium text-slate-600">{user?.username}</span>
+            </p>
+
             <div>
-              <label className="text-sm text-slate-500">ชื่อโรงเรียน</label>
-              <input className="w-full border rounded-lg px-3 py-2 mt-1 text-sm"
-                value={form.school_name} onChange={(e) => setForm({ ...form, school_name: e.target.value })} />
+              <label className="text-sm text-slate-500">รหัสผ่านใหม่</label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                className="w-full border rounded-lg px-3 py-2 mt-1 text-sm"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="อย่างน้อย 6 ตัวอักษร"
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm text-slate-500">สีหลัก</label>
-                <input type="color" className="w-full h-10 border rounded-lg mt-1"
-                  value={form.primary_color} onChange={(e) => setForm({ ...form, primary_color: e.target.value })} />
-              </div>
-              <div>
-                <label className="text-sm text-slate-500">สีรอง</label>
-                <input type="color" className="w-full h-10 border rounded-lg mt-1"
-                  value={form.accent_color} onChange={(e) => setForm({ ...form, accent_color: e.target.value })} />
-              </div>
+            <div>
+              <label className="text-sm text-slate-500">ยืนยันรหัสผ่านใหม่</label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                className="w-full border rounded-lg px-3 py-2 mt-1 text-sm"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm text-slate-500">เกณฑ์เฝ้าระวัง (คำเตือน)</label>
-                <input type="number" className="w-full border rounded-lg px-3 py-2 mt-1 text-sm"
-                  value={form.watch_threshold} onChange={(e) => setForm({ ...form, watch_threshold: Number(e.target.value) })} />
+
+            {msg && (
+              <div className={`text-sm rounded-lg px-3 py-2 ${
+                msg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'
+              }`}>
+                {msg.type === 'success' ? '✅ ' : '⚠️ '}{msg.text}
               </div>
-              <div>
-                <label className="text-sm text-slate-500">เกณฑ์ความเสี่ยงสูง (คำเตือน)</label>
-                <input type="number" className="w-full border rounded-lg px-3 py-2 mt-1 text-sm"
-                  value={form.risk_threshold} onChange={(e) => setForm({ ...form, risk_threshold: Number(e.target.value) })} />
-              </div>
-            </div>
-            <button className="w-full bg-primary text-white py-2.5 rounded-lg text-sm hover:bg-primary-light">
-              {saved ? '✓ บันทึกแล้ว' : 'บันทึกการตั้งค่า'}
+            )}
+
+            <button
+              disabled={busy}
+              className="w-full bg-primary hover:bg-primary-light text-white py-2.5 rounded-lg text-sm disabled:opacity-60"
+            >
+              {busy ? 'กำลังบันทึก...' : 'เปลี่ยนรหัสผ่าน'}
             </button>
           </form>
         </div>
