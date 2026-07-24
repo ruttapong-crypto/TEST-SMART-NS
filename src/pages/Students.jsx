@@ -26,6 +26,7 @@ export default function Students() {
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [debugInfo, setDebugInfo] = useState(null);
 
   useEffect(() => {
     const unsub = onValue(
@@ -37,12 +38,27 @@ export default function Students() {
         setStudents(list);
         setLoadError('');
         setLoading(false);
+        setDebugInfo((prev) => ({ ...prev, onValueCount: list.length, onValueAt: new Date().toLocaleTimeString('th-TH') }));
+        console.log('[SmartExam debug] onValue students snapshot children:', list.length, list.map((s) => s.student_code));
       },
       (err) => {
         setLoadError(`โหลดรายชื่อนักเรียนไม่สำเร็จ: ${err.message} (ตรวจสอบ Firebase Rules ว่า publish แล้วหรือยัง)`);
         setLoading(false);
+        setDebugInfo((prev) => ({ ...prev, onValueError: err.message }));
       }
     );
+
+    // ดึงข้อมูลแบบ one-time แยกต่างหาก เพื่อเทียบว่าตรงกับที่ onValue ได้หรือไม่ (สำหรับ debug)
+    get(ref(db, 'students'))
+      .then((snap) => {
+        const count = snap.exists() ? Object.keys(snap.val()).length : 0;
+        setDebugInfo((prev) => ({ ...prev, oneTimeGetCount: count, oneTimeGetAt: new Date().toLocaleTimeString('th-TH') }));
+        console.log('[SmartExam debug] one-time get() students count:', count);
+      })
+      .catch((err) => {
+        setDebugInfo((prev) => ({ ...prev, oneTimeGetError: err.message }));
+      });
+
     return unsub;
   }, []);
 
@@ -305,6 +321,17 @@ export default function Students() {
         {loadError && (
           <div className="mx-6 mt-4 text-sm bg-red-50 text-red-600 border border-red-200 rounded-lg px-4 py-3">
             ⚠️ {loadError}
+          </div>
+        )}
+
+        {debugInfo && (
+          <div className="mx-6 mt-4 text-xs font-mono bg-slate-800 text-lime-300 rounded-lg px-4 py-3 space-y-0.5">
+            <div>🔧 DEBUG — onValue (realtime): {debugInfo.onValueCount ?? '...'} คน (อัปเดตล่าสุด {debugInfo.onValueAt ?? '-'})</div>
+            <div>🔧 DEBUG — get() ครั้งเดียว: {debugInfo.oneTimeGetCount ?? '...'} คน (ดึงเมื่อ {debugInfo.oneTimeGetAt ?? '-'})</div>
+            <div>🔧 DEBUG — state ปัจจุบันที่ใช้แสดงผล (students.length): {students.length} คน</div>
+            <div>🔧 DEBUG — หลังกรอง (filtered.length): {filtered.length} คน | หน้า {currentPage}/{totalPages}</div>
+            {debugInfo.onValueError && <div className="text-red-400">🔧 onValue error: {debugInfo.onValueError}</div>}
+            {debugInfo.oneTimeGetError && <div className="text-red-400">🔧 get() error: {debugInfo.oneTimeGetError}</div>}
           </div>
         )}
 
