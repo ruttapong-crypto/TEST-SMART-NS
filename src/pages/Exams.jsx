@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { onValue, push, ref, remove, set, update } from 'firebase/database';
+import { useCallback, useEffect, useState } from 'react';
+import { get, push, ref, remove, set, update } from 'firebase/database';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import Sidebar from '../components/Sidebar';
@@ -31,13 +31,18 @@ export default function Exams() {
   const [editingId, setEditingId] = useState(null);
   const [formMsg, setFormMsg] = useState(null); // { type: 'success' | 'error', text }
 
-  useEffect(() => {
-    return onValue(ref(db, 'exams'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      setExams(list);
-    });
+  const loadExams = useCallback(async () => {
+    const snap = await get(ref(db, 'exams'));
+    const list = [];
+    snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+    setExams(list);
   }, []);
+
+  useEffect(() => {
+    loadExams();
+    const interval = setInterval(loadExams, 8000);
+    return () => clearInterval(interval);
+  }, [loadExams]);
 
   // ครูเห็นและจัดการได้เฉพาะข้อสอบวิชาของตนเอง
   const visibleExams = isTeacher ? exams.filter((e) => e.subject === user.subject) : exams;
@@ -58,6 +63,7 @@ export default function Exams() {
       } else {
         await set(push(ref(db, 'exams')), payload);
       }
+      await loadExams();
       setForm(isTeacher ? { ...EMPTY, subject: user.subject || '' } : EMPTY);
       setEditingId(null);
       setFormMsg({ type: 'success', text: 'ลงข้อสอบสำเร็จ' });
@@ -80,10 +86,14 @@ export default function Exams() {
 
   async function toggleStatus(exam) {
     await update(ref(db, `exams/${exam.id}`), { status: exam.status === 'open' ? 'closed' : 'open' });
+    await loadExams();
   }
 
   async function del(id) {
-    if (confirm('ยืนยันการลบข้อสอบนี้?')) await remove(ref(db, `exams/${id}`));
+    if (confirm('ยืนยันการลบข้อสอบนี้?')) {
+      await remove(ref(db, `exams/${id}`));
+      await loadExams();
+    }
   }
 
   return (

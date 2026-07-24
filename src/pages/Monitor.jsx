@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { onValue, ref } from 'firebase/database';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { get, ref } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -26,23 +26,31 @@ export default function Monitor() {
   const [search, setSearch] = useState('');
   const [quickLevel, setQuickLevel] = useState('all');
 
-  useEffect(() => {
-    const unsubEvents = onValue(ref(db, 'events_log'), (snap) => {
+  // หมายเหตุ: ใช้ get() แบบ polling แทน onValue (realtime listener) เพราะบางเครือข่าย
+  // (เช่นเครือข่ายโรงเรียนที่มีไฟร์วอลล์บล็อก WebSocket) ทำให้ onValue ค้างได้ข้อมูลไม่ครบ
+  // แบบเงียบๆ โดยไม่ error ส่วน get() ทำงานผ่าน HTTPS request ปกติ เชื่อถือได้กว่าในทุกเครือข่าย
+  const loadData = useCallback(async () => {
+    try {
+      const [eventsSnap, studentsSnap] = await Promise.all([
+        get(ref(db, 'events_log')),
+        get(ref(db, 'students'))
+      ]);
       const list = [];
-      snap.forEach((child) => list.push({ id: child.key, ...child.val() }));
+      eventsSnap.forEach((child) => list.push({ id: child.key, ...child.val() }));
       list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       setEvents(list);
+      setStudentsCount(studentsSnap.exists() ? Object.keys(studentsSnap.val()).length : 0);
       setLastRefresh(new Date());
-    });
-    const unsubStudents = onValue(ref(db, 'students'), (snap) => {
-      setStudentsCount(snap.exists() ? Object.keys(snap.val()).length : 0);
-    });
+    } catch (err) {
+      console.error('[Monitor] โหลดข้อมูลไม่สำเร็จ:', err.message);
+    }
+  }, []);
 
-    // ตามสเปก: Ajax Auto Update ทุก 10 วินาที (สำรองไว้เผื่อ listener ไม่ยิง)
-    const interval = setInterval(() => setLastRefresh(new Date()), 10000);
+  useEffect(() => {
+    loadData();
+    // อัปเดตทุก 5 วินาที ให้ใกล้เคียง real-time มากที่สุดสำหรับหน้า Monitor สด
+    const interval = setInterval(loadData, 5000);
     return () => {
-      unsubEvents();
-      unsubStudents();
       clearInterval(interval);
     };
   }, []);
@@ -104,10 +112,10 @@ export default function Monitor() {
               </p>
             </div>
             <div className="text-right text-xs text-white/90">
-              <div className="bg-white/15 px-2 py-1 rounded-full inline-block mb-1">Ajax Auto Update ทุก 10 วินาที</div>
+              <div className="bg-white/15 px-2 py-1 rounded-full inline-block mb-1">อัปเดตอัตโนมัติทุก 5 วินาที</div>
               <div>รีเฟรชล่าสุด {lastRefresh.toLocaleTimeString('th-TH')}</div>
               <button
-                onClick={() => setLastRefresh(new Date())}
+                onClick={loadData}
                 className="mt-1 bg-white text-primary px-3 py-1 rounded-lg font-semibold"
               >
                 รีเฟรชทันที

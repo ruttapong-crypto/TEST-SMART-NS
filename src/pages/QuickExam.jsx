@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { onValue, ref, update } from 'firebase/database';
+import { useCallback, useEffect, useState } from 'react';
+import { get, ref, update } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -7,16 +7,22 @@ import Topbar from '../components/Topbar';
 export default function QuickExam() {
   const [exams, setExams] = useState([]);
 
-  useEffect(() => {
-    return onValue(ref(db, 'exams'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      setExams(list);
-    });
+  const loadExams = useCallback(async () => {
+    const snap = await get(ref(db, 'exams'));
+    const list = [];
+    snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+    setExams(list);
   }, []);
+
+  useEffect(() => {
+    loadExams();
+    const interval = setInterval(loadExams, 8000);
+    return () => clearInterval(interval);
+  }, [loadExams]);
 
   async function toggle(exam) {
     await update(ref(db, `exams/${exam.id}`), { status: exam.status === 'open' ? 'closed' : 'open' });
+    await loadExams();
   }
 
   return (

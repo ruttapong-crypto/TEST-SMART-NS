@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
-import { onValue, push, ref, remove, serverTimestamp, set, update } from 'firebase/database';
+import { get, push, ref, remove, serverTimestamp, set, update } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -30,20 +30,26 @@ export default function QRCodes() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newQr, setNewQr] = useState({ level: 'ม.1', label: '' });
 
-  useEffect(() => {
-    const unsubExams = onValue(ref(db, 'exams'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      setExams(list);
-    });
-    const unsubQr = onValue(ref(db, 'qr_codes'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-      setCustomQrs(list);
-    });
-    return () => { unsubExams(); unsubQr(); };
+  const loadData = useCallback(async () => {
+    const [examsSnap, qrSnap] = await Promise.all([
+      get(ref(db, 'exams')),
+      get(ref(db, 'qr_codes'))
+    ]);
+    const examList = [];
+    examsSnap.forEach((c) => examList.push({ id: c.key, ...c.val() }));
+    setExams(examList);
+
+    const qrList = [];
+    qrSnap.forEach((c) => qrList.push({ id: c.key, ...c.val() }));
+    qrList.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    setCustomQrs(qrList);
   }, []);
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 8000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   async function copyUrl(key, url) {
     await navigator.clipboard.writeText(url);
@@ -62,6 +68,7 @@ export default function QRCodes() {
   async function saveQr(level) {
     const qrRef = push(ref(db, 'qr_codes'));
     await set(qrRef, { level, url: urlFor(level), created_at: serverTimestamp() });
+    await loadData();
     setSavedAt(level);
     setTimeout(() => setSavedAt(null), 1500);
   }
@@ -75,16 +82,21 @@ export default function QRCodes() {
       url: urlFor(newQr.level),
       created_at: serverTimestamp()
     });
+    await loadData();
     setNewQr({ level: 'ม.1', label: '' });
     setShowCreateModal(false);
   }
 
   async function deleteCustomQr(id) {
-    if (confirm('ยืนยันการลบ QR Code นี้?')) await remove(ref(db, `qr_codes/${id}`));
+    if (confirm('ยืนยันการลบ QR Code นี้?')) {
+      await remove(ref(db, `qr_codes/${id}`));
+      await loadData();
+    }
   }
 
   async function toggleExamStatus(exam) {
     await update(ref(db, `exams/${exam.id}`), { status: exam.status === 'open' ? 'closed' : 'open' });
+    await loadData();
   }
 
   const examsForModal = exams.filter((e) => e.level === subjectModalLevel);

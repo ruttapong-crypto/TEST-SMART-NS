@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { onValue, push, ref, remove, set } from 'firebase/database';
+import { useCallback, useEffect, useState } from 'react';
+import { get, push, ref, remove, set } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -10,22 +10,31 @@ export default function ExamRounds() {
   const [rounds, setRounds] = useState([]);
   const [form, setForm] = useState(EMPTY);
 
-  useEffect(() => {
-    return onValue(ref(db, 'exam_rounds'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      setRounds(list);
-    });
+  const loadRounds = useCallback(async () => {
+    const snap = await get(ref(db, 'exam_rounds'));
+    const list = [];
+    snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+    setRounds(list);
   }, []);
+
+  useEffect(() => {
+    loadRounds();
+    const interval = setInterval(loadRounds, 8000);
+    return () => clearInterval(interval);
+  }, [loadRounds]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     await set(push(ref(db, 'exam_rounds')), form);
+    await loadRounds();
     setForm(EMPTY);
   }
 
   async function del(id) {
-    if (confirm('ยืนยันการลบรอบสอบนี้?')) await remove(ref(db, `exam_rounds/${id}`));
+    if (confirm('ยืนยันการลบรอบสอบนี้?')) {
+      await remove(ref(db, `exam_rounds/${id}`));
+      await loadRounds();
+    }
   }
 
   return (

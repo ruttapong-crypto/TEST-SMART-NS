@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { get, onValue, push, ref, remove, set, update } from 'firebase/database';
+import { get, push, ref, remove, set, update } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -28,57 +28,39 @@ export default function Students() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [debugInfo, setDebugInfo] = useState(null);
 
-  useEffect(() => {
-    const unsub = onValue(
-      ref(db, 'students'),
-      (snap) => {
-        const list = [];
-        snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-        list.sort((a, b) => String(a.student_code || '').localeCompare(String(b.student_code || '')));
-        setStudents(list);
-        setLoadError('');
-        setLoading(false);
-        setDebugInfo((prev) => ({ ...prev, onValueCount: list.length, onValueAt: new Date().toLocaleTimeString('th-TH') }));
-        console.log('[SmartExam debug] onValue students snapshot children:', list.length, list.map((s) => s.student_code));
-      },
-      (err) => {
-        setLoadError(`โหลดรายชื่อนักเรียนไม่สำเร็จ: ${err.message} (ตรวจสอบ Firebase Rules ว่า publish แล้วหรือยัง)`);
-        setLoading(false);
-        setDebugInfo((prev) => ({ ...prev, onValueError: err.message }));
-      }
-    );
-
-    // ดึงข้อมูลแบบ one-time แยกต่างหาก เพื่อเทียบว่าตรงกับที่ onValue ได้หรือไม่ (สำหรับ debug)
-    get(ref(db, 'students'))
-      .then((snap) => {
-        const count = snap.exists() ? Object.keys(snap.val()).length : 0;
-        setDebugInfo((prev) => ({ ...prev, oneTimeGetCount: count, oneTimeGetAt: new Date().toLocaleTimeString('th-TH') }));
-        console.log('[SmartExam debug] one-time get() students count:', count);
-      })
-      .catch((err) => {
-        setDebugInfo((prev) => ({ ...prev, oneTimeGetError: err.message }));
-      });
-
-    return unsub;
-  }, []);
-
-  // ปุ่มรีเฟรชสำรอง — เผื่อ realtime listener ค้างเพราะแท็บถูกเบราว์เซอร์ freeze ไว้นาน
-  // แล้วการเชื่อมต่อ WebSocket ไม่ auto-reconnect (ดึงข้อมูลใหม่แบบ one-time แทน)
-  const [refreshing, setRefreshing] = useState(false);
-  async function manualRefresh() {
-    setRefreshing(true);
-    setLoadError('');
+  // หมายเหตุสำคัญ: เดิมใช้ onValue (realtime listener) แต่พบว่าในบางเครือข่าย (เช่น เครือข่ายโรงเรียนที่มี
+  // ไฟร์วอลล์/พร็อกซีบล็อก WebSocket) การเชื่อมต่อแบบ persistent จะค้างและได้ข้อมูลเก่าไม่ครบ
+  // ในขณะที่การดึงข้อมูลแบบ get() ครั้งเดียวได้ข้อมูลถูกต้องเสมอ จึงเปลี่ยนมาใช้ get() แบบ polling แทน
+  async function loadStudents(isBackground) {
+    if (!isBackground) setLoading(true);
     try {
       const snap = await get(ref(db, 'students'));
       const list = [];
       snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
       list.sort((a, b) => String(a.student_code || '').localeCompare(String(b.student_code || '')));
       setStudents(list);
+      setLoadError('');
+      setDebugInfo({ count: list.length, at: new Date().toLocaleTimeString('th-TH') });
     } catch (err) {
-      setLoadError(`รีเฟรชไม่สำเร็จ: ${err.message}`);
+      setLoadError(`โหลดรายชื่อนักเรียนไม่สำเร็จ: ${err.message} (ตรวจสอบ Firebase Rules ว่า publish แล้วหรือยัง)`);
+      setDebugInfo({ error: err.message });
     } finally {
-      setRefreshing(false);
+      setLoading(false);
     }
+  }
+
+  useEffect(() => {
+    loadStudents(false);
+    const interval = setInterval(() => loadStudents(true), 10000); // อัปเดตพื้นหลังทุก 10 วินาที
+    return () => clearInterval(interval);
+  }, []);
+
+  // ปุ่มรีเฟรชด้วยตนเอง — ดึงข้อมูลใหม่ทันทีนอกรอบ polling ปกติ
+  const [refreshing, setRefreshing] = useState(false);
+  async function manualRefresh() {
+    setRefreshing(true);
+    await loadStudents(true);
+    setRefreshing(false);
   }
 
   function downloadTemplate() {
@@ -222,6 +204,7 @@ export default function Students() {
       }
       setImportResult({ added, updated, skipped });
       setPreview([]);
+      await loadStudents(true);
     } finally {
       setImporting(false);
     }
@@ -237,6 +220,7 @@ export default function Students() {
       return;
     }
     await set(push(ref(db, 'students')), { ...form, student_code: code });
+    await loadStudents(true);
     setAddMsg({ type: 'success', text: `เพิ่ม "${form.name}" เรียบร้อยแล้ว` });
     setForm(EMPTY_FORM);
     // ล้างตัวกรองและกลับไปหน้าแรก เพื่อให้เห็นนักเรียนที่เพิ่งเพิ่มทันที (เผื่อโดนตัวกรองเดิมบัง)
@@ -248,7 +232,10 @@ export default function Students() {
   }
 
   async function del(id) {
-    if (confirm('ยืนยันการลบนักเรียนคนนี้?')) await remove(ref(db, `students/${id}`));
+    if (confirm('ยืนยันการลบนักเรียนคนนี้?')) {
+      await remove(ref(db, `students/${id}`));
+      await loadStudents(true);
+    }
   }
 
   function toggleSelect(id) {
@@ -278,6 +265,7 @@ export default function Students() {
     if (!confirm(`ยืนยันการลบนักเรียนที่เลือกไว้ ${selectedIds.size} คน? การลบนี้ไม่สามารถย้อนกลับได้`)) return;
     await Promise.all([...selectedIds].map((id) => remove(ref(db, `students/${id}`))));
     setSelectedIds(new Set());
+    await loadStudents(true);
   }
 
   function downloadAllStudents() {
@@ -326,12 +314,10 @@ export default function Students() {
 
         {debugInfo && (
           <div className="mx-6 mt-4 text-xs font-mono bg-slate-800 text-lime-300 rounded-lg px-4 py-3 space-y-0.5">
-            <div>🔧 DEBUG — onValue (realtime): {debugInfo.onValueCount ?? '...'} คน (อัปเดตล่าสุด {debugInfo.onValueAt ?? '-'})</div>
-            <div>🔧 DEBUG — get() ครั้งเดียว: {debugInfo.oneTimeGetCount ?? '...'} คน (ดึงเมื่อ {debugInfo.oneTimeGetAt ?? '-'})</div>
-            <div>🔧 DEBUG — state ปัจจุบันที่ใช้แสดงผล (students.length): {students.length} คน</div>
+            <div>🔧 DEBUG — โหลดจาก Firebase: {debugInfo.count ?? '...'} คน (ล่าสุด {debugInfo.at ?? '-'} · รีเฟรชอัตโนมัติทุก 10 วิ)</div>
+            <div>🔧 DEBUG — state ที่ใช้แสดงผล (students.length): {students.length} คน</div>
             <div>🔧 DEBUG — หลังกรอง (filtered.length): {filtered.length} คน | หน้า {currentPage}/{totalPages}</div>
-            {debugInfo.onValueError && <div className="text-red-400">🔧 onValue error: {debugInfo.onValueError}</div>}
-            {debugInfo.oneTimeGetError && <div className="text-red-400">🔧 get() error: {debugInfo.oneTimeGetError}</div>}
+            {debugInfo.error && <div className="text-red-400">🔧 error: {debugInfo.error}</div>}
           </div>
         )}
 

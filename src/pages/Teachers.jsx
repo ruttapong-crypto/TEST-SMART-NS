@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { onValue, push, ref, remove, set, update } from 'firebase/database';
+import { useCallback, useEffect, useState } from 'react';
+import { get, push, ref, remove, set, update } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -13,17 +13,22 @@ export default function Teachers() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    return onValue(ref(db, 'users'), (snap) => {
-      const list = [];
-      snap.forEach((c) => {
-        const v = c.val();
-        if (v.role === 'teacher') list.push({ id: c.key, ...v });
-      });
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      setTeachers(list);
+  const loadTeachers = useCallback(async () => {
+    const snap = await get(ref(db, 'users'));
+    const list = [];
+    snap.forEach((c) => {
+      const v = c.val();
+      if (v.role === 'teacher') list.push({ id: c.key, ...v });
     });
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    setTeachers(list);
   }, []);
+
+  useEffect(() => {
+    loadTeachers();
+    const interval = setInterval(loadTeachers, 8000);
+    return () => clearInterval(interval);
+  }, [loadTeachers]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -57,6 +62,7 @@ export default function Teachers() {
       }
       await set(push(ref(db, 'users')), payload);
     }
+    await loadTeachers();
     setForm(EMPTY_FORM);
     setEditingId(null);
   }
@@ -76,6 +82,7 @@ export default function Teachers() {
   async function del(id) {
     if (confirm('ยืนยันการลบบัญชีครูคนนี้? ครูจะไม่สามารถเข้าสู่ระบบได้อีก')) {
       await remove(ref(db, `users/${id}`));
+      await loadTeachers();
     }
   }
 

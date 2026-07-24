@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { onValue, ref, update } from 'firebase/database';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { get, ref, update } from 'firebase/database';
 import { db } from '../firebase';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -41,25 +41,31 @@ export default function Reports() {
   const [columns, setColumns] = useState(DEFAULT_COLUMNS);
   const [showColumnPicker, setShowColumnPicker] = useState(false);
 
-  useEffect(() => {
-    const unsubSessions = onValue(ref(db, 'exam_sessions'), (snap) => {
-      const list = [];
-      snap.forEach((c) => list.push({ id: c.key, ...c.val() }));
-      list.sort((a, b) => (b.start_time || 0) - (a.start_time || 0));
-      setSessions(list);
-    });
-    const unsubStudents = onValue(ref(db, 'students'), (snap) => {
-      const map = {};
-      snap.forEach((c) => { map[c.key] = c.val(); });
-      setStudents(map);
-    });
-    const unsubExams = onValue(ref(db, 'exams'), (snap) => {
-      const map = {};
-      snap.forEach((c) => { map[c.key] = c.val(); });
-      setExams(map);
-    });
-    return () => { unsubSessions(); unsubStudents(); unsubExams(); };
+  const loadData = useCallback(async () => {
+    const [sessionsSnap, studentsSnap, examsSnap] = await Promise.all([
+      get(ref(db, 'exam_sessions')),
+      get(ref(db, 'students')),
+      get(ref(db, 'exams'))
+    ]);
+    const list = [];
+    sessionsSnap.forEach((c) => list.push({ id: c.key, ...c.val() }));
+    list.sort((a, b) => (b.start_time || 0) - (a.start_time || 0));
+    setSessions(list);
+
+    const studentMap = {};
+    studentsSnap.forEach((c) => { studentMap[c.key] = c.val(); });
+    setStudents(studentMap);
+
+    const examMap = {};
+    examsSnap.forEach((c) => { examMap[c.key] = c.val(); });
+    setExams(examMap);
   }, []);
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 8000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   // รวมข้อมูล session เข้ากับชื่อนักเรียน/วิชา ให้อ่านง่าย พร้อมคำนวณระยะเวลาที่ใช้ทำ
   const enriched = useMemo(() => sessions.map((s) => {
